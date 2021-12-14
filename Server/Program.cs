@@ -9,32 +9,43 @@ namespace Server
 {
     class Program
     {
-        static class Game
-        {
-            static Board board;
+        static Board board;
 
-            public static void InitGame()
-            {
-                board = new Board();
-            }
-        }
-
-        static Map<IPEndPoint, Player> map = new Map<IPEndPoint, Player>();
+        static Map<(IPEndPoint, string), Player> players;
+ 
+        static ASCIIEncoding ascii = new ASCIIEncoding();
 
         static int localPort = 7777;
         static UdpClient UDPListener;
 
-        static List<IPEndPoint> clients = new List<IPEndPoint>();
-
         static void Main(string[] args)
         {
-            
             UDPListener = new UdpClient(localPort);
-            Game.InitGame();
+            initGame();
             UDPListener.BeginReceive(UDPRecieveCallback, null);
-            while (true) { 
+            while (true) 
+            {
+                Update();
             }
 
+        }
+        public static void initGame()
+        {
+            players = new Map<(IPEndPoint, string), Player>();
+            board = new Board();
+            board.foodFillBoard();
+        }
+        public static Player spawnPlayer()
+        {
+            return board.spawnPlayer();
+        }
+        public static void removePlayer(Player player)
+        {
+            board.removeEntity(player);
+        }
+        public static void Update()
+        {
+            var newStates = board.updateBoard(Utils.FrameTime);
         }
 
         public static void UDPRecieveCallback(IAsyncResult result)
@@ -46,14 +57,38 @@ namespace Server
 
             try
             {
+                Player player;
+                string name;
                 switch (data[0]) {
                     case 254:
+                        players.Add((clientEndPoint, 
+                            ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array)),
+                            spawnPlayer());
                         break;
-                }
+
+                    case 255:
+                        name = ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array);
+                        player = players.Forward[(clientEndPoint, name)];
+                        removePlayer(player);
+                        players.Remove(player);
+                        break;
+
+                    case 102:
+                        name = ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array);
+                        player = players.Forward[(clientEndPoint, name)];
+                        var offset = 2 + data[1] - 1;
+                        (float, float) moveVec = (
+                            BitConverter.ToSingle(data, offset),
+                            BitConverter.ToSingle(data, offset + sizeof(float))
+                            );
+                        player.moveVec = moveVec;
+                        break;
+                }   
             }
-            catch
+            catch (Exception error)
             {
-                Console.WriteLine("error occurred");
+                Console.WriteLine("-- UDPRecieveCallback Error --");
+                Console.WriteLine(error.Message);
             }
 
         }

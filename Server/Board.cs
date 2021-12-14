@@ -1,25 +1,29 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace Server
 {
     class Board
     {
         Random rand;
-        int sectorsScale;
+        int sectorsNum;
         int size;
 
         Sector[,] sectors;
+        List<Player> players = new List<Player>();
 
         public Board()
         {
             size = 2000;
-            sectorsScale = (int)Math.Round(size / Utils.getRadius(Utils.PLAYER_MASS) / 8);
-            sectors = new Sector[sectorsScale, sectorsScale];
+            sectorsNum = (int)Math.Round(size / Utils.getRadius(Utils.PLAYER_MASS) / 8);
+            Sector.size = size / sectorsNum;
+            sectors = new Sector[sectorsNum, sectorsNum];
             rand = new Random();
+            Cell.board = this;
         }
 
-        private void foodFillBoard()
+        public void foodFillBoard()
         {
             var startFood = rand.Next(140, 250);
             for (int i = 0; i < startFood; i++)
@@ -29,45 +33,82 @@ namespace Server
             }
         }
 
-        protected Player spawnPlayer()
+        public Player spawnPlayer()
         {
-            Player player = null;
-            while (player == null)
+            bool IsSpawnable = false;
+            double initialRadius = Utils.getRadius(Utils.PLAYER_MASS);
+
+            while (!IsSpawnable)
             {
                 var coords = (rand.Next(0, size * 10) / 10f, rand.Next(0, size * 10) / 10f);
+                IsSpawnable = true;
 
-                player = new Player(coords, this);
-
-                var sectorsCoords = Utils.getSectorNum(coords, sectorsScale);
+                var sectorsCoords = Utils.getSectorNum(coords);
                 var sector = sectors[sectorsCoords.Item1, sectorsCoords.Item2];
                 var players = sector.entities.Where(x => typeof(Player).IsInstanceOfType(x));
 
-                foreach (Player p in players)
+                foreach (var p in players)
                 {
-                    var diff = Utils.Subtract(p.center, player.center);
-                    if (diff.Item1 + diff.Item2 <= Math.Pow(p.radius + player.radius, 2))
+                    var diff = Utils.Subtract(p.center, coords);
+                    if (diff.Item1 + diff.Item2 <= Math.Pow(p.radius + initialRadius, 2))
                     {
-                        player = null;
+                        IsSpawnable = false;
                         break;
                     }
                 }
-                if (player != null)
+                if (IsSpawnable)
                 {
-                    sector.entities.Add(player);
-
+                    var player = spawnEntity<Player>(coords);
+                    this.players.Add(player);
+                    return player;
                 }
             }
-            return player;
+            return null;
         }
 
         public T spawnEntity<T>((float, float) coords) where T : Cell
         {
-            var sectorsCoords = Utils.getSectorNum(coords, sectorsScale);
+            var sectorsCoords = Utils.getSectorNum(coords);
 
             var entity = (T)Activator.CreateInstance(typeof(T), coords);
             sectors[sectorsCoords.Item1, sectorsCoords.Item2].entities.Add(entity);
 
             return entity;
+        }
+
+        public void updateBoard(float frameScale)
+        {
+            players.Sort((p1, p2) => p1.mass.CompareTo(p2.mass));
+            foreach(var player in players)
+            {
+                player.Move(frameScale);
+            }
+        }
+
+        public void removeEntity(Cell entity)
+        {
+            var sector = Utils.getSectorNum(entity.center);
+            sectors[sector.Item1, sector.Item2].entities.Remove(entity);
+        }
+
+        public HashSet<Sector> getVisibleArea(Cell entity, int radius = 1)
+        {
+            HashSet<Sector> res = new HashSet<Sector>();
+            var sectorCoords = Utils.getSectorNum(entity.center);
+            for (int i = sectorCoords.Item1 - radius; i < sectorCoords.Item1 + radius; i++)
+            {
+                if (i > sectorsNum - 1 || i < 0)
+                    continue;
+                for (int j = sectorCoords.Item2 - radius; j < sectorCoords.Item2 + radius; j++)
+                {
+                    if (j > sectorsNum - 1 || j < 0)
+                        continue;
+
+                    res.Add(sectors[i, j]);
+                }
+            }
+
+            return res;
         }
     }
 }
