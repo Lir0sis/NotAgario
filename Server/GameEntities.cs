@@ -5,19 +5,20 @@ using System.Text;
 
 namespace Server
 {
-    struct NewState
+    class NewState
     {
-        public Player player;
-        public List<HashSet<Cell>> newEntities;
-        public HashSet<Cell> goneEntities;
-        public HashSet<Cell> loadedEntities;
+        public List<HashSet<Cell>> newEntities = new List<HashSet<Cell>>();
+        public HashSet<Cell> goneEntities = new HashSet<Cell>();
+        public HashSet<Cell> loadedEntities = new HashSet<Cell>();
+
     }
 
-    struct Sector
+    class Sector
     {
-        public static int size;
+        public static float size;
         //public (int, int) coords;
-        public HashSet<Cell> entities;
+        public HashSet<Cell> entities = new HashSet<Cell>();
+
     }
     abstract class Cell
     {
@@ -42,6 +43,10 @@ namespace Server
 
     class Player : Cell
     {
+        private static ushort id = 0;
+        private ushort _id;
+        public ushort Id { get => _id; private set => _id = id++; }
+
         public HashSet<Sector> loadedArea;
         public (float, float) moveVec = (0f,0f);
         public Player((float, float) coords)
@@ -59,10 +64,16 @@ namespace Server
                 var newArea = board.getVisibleArea(this);
                 foreach (var sec in newArea.Except(loadedArea))
                     result.goneEntities.UnionWith(sec.entities);
+                foreach (var sec in newArea.Intersect(loadedArea))
+                    result.loadedEntities.UnionWith(sec.entities);
                 foreach (var sec in loadedArea.Except(newArea))
                     result.newEntities.Add(sec.entities);
+                
                 loadedArea = newArea;
             }
+            else
+                foreach(var sec in loadedArea)
+                    result.loadedEntities.UnionWith(sec.entities);
             center = newCoords;
             return result;
         }
@@ -72,14 +83,24 @@ namespace Server
             {
                 foreach (var entity in sec.entities)
                 {
-
+                    var vec = Utils.Subtract(center, entity.center);
+                    var distEuclid = Math.Pow(vec.Item1, 2) + Math.Pow(vec.Item2, 2);
+                    if (distEuclid <= Math.Pow(radius, 2) && radius > entity.radius)
+                    {
+                        sec.entities.Remove(entity);
+                        board.goneEntities.Add(entity);
+                    }
                 }
             }
         }
+
     }
 
     class Food : Cell
     {
+        private static ushort id = 0;
+        private ushort _id;
+        public ushort Id { get => _id; private set => _id = id++; }
         public Food((float, float) coords)
         {
             center = coords;

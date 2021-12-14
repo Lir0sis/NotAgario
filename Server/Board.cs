@@ -6,19 +6,22 @@ namespace Server
 {
     class Board
     {
+        public HashSet<Cell> goneEntities = null;
+        public HashSet<Cell> newEntities = null;
         Random rand;
         int sectorsNum;
         int size;
 
         Sector[,] sectors;
-        List<Player> players = new List<Player>();
+        public List<Player> players = new List<Player>();
 
         public Board()
         {
             size = 2000;
             sectorsNum = (int)Math.Round(size / Utils.getRadius(Utils.PLAYER_MASS) / 8);
-            Sector.size = size / sectorsNum;
+            Sector.size = (float)size / sectorsNum;
             sectors = new Sector[sectorsNum, sectorsNum];
+            fillSectors(ref sectors);
             rand = new Random();
             Cell.board = this;
         }
@@ -31,6 +34,15 @@ namespace Server
                 var coords = (rand.Next(0, size * 10) / 10f, rand.Next(0, size * 10) / 10f);
                 spawnEntity<Food>(coords);
             }
+        }
+
+        public void fillSectors(ref Sector[,] sectors)
+        {
+            for (int i = 0; i < sectorsNum; i++)
+                for (int j = 0; j < sectorsNum; j++)
+                {
+                    sectors[i, j] = new Sector();
+                }
         }
 
         public Player spawnPlayer()
@@ -76,13 +88,24 @@ namespace Server
             return entity;
         }
 
-        public void updateBoard(float frameScale)
+        public List<(Player, NewState)> updateBoard(float frameScale)
         {
+            newEntities = new HashSet<Cell>();
+            goneEntities = new HashSet<Cell>();
+
+            var states = new List<(Player, NewState)>();
+
             players.Sort((p1, p2) => p1.mass.CompareTo(p2.mass));
             foreach(var player in players)
             {
-                player.Move(frameScale);
+                states.Add((player, player.Move(frameScale)));
             }
+            foreach (var player in players)
+            {
+                player.Update();
+            }
+
+            return states;
         }
 
         public void removeEntity(Cell entity)
