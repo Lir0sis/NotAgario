@@ -27,6 +27,7 @@ namespace Server
             while (true) 
             {
                 Update();
+                System.Threading.Thread.Sleep(5);
             }
 
         }
@@ -58,47 +59,95 @@ namespace Server
         public static void SendData((Player, NewState) state)
         {
             var User = players.Reverse[state.Item1];
-            List<byte> bytes = null;
 
             state.Item2.goneEntities.UnionWith(state.Item2.loadedEntities.Intersect(board.goneEntities));
-            if (state.Item2.newEntities.Count() > 0)
-            {
-                bytes = new List<byte>() { 100 };
-                bytes.AddRange(BitConverter.GetBytes((ushort)state.Item2.newEntities.Count()));
 
-                foreach (var entities in state.Item2.newEntities)
-                    foreach (var entity in entities)
-                    {
-                        bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(entity.center.Item1)));
-                        bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(entity.center.Item2)));
-                        bytes.AddRange(BitConverter.GetBytes((ushort)entity.mass));
-                        int nameLentgh = 0;
-                        byte[] nameBytes = null;
-                        if (typeof(Player).IsInstanceOfType(entity))
-                        {
-                            var name = players.Reverse[(Player)entity].Item2;
-                            nameLentgh = name.Length;
-                            nameBytes = ascii.GetBytes(name);
-                        }
-                        else if (typeof(Food).IsInstanceOfType(entity))
-                        {
-                            var name = $"#{((Food)entity).Id}";
-                            nameLentgh = name.Length;
-                            nameBytes = ascii.GetBytes(name);
-                        }
-                        bytes.Add((byte)nameLentgh);
-                        bytes.AddRange(nameBytes);
-                    }
-                UDPClient.BeginSend(bytes.ToArray(), bytes.Count(), User.Item1, UDPSendCallback, null);
+            SendAppear(state.Item2.newEntities, User.Item1);
+            SendDisappear(state.Item2.goneEntities, User.Item1);
+            SendUpdate(players.Forward[User], User.Item1);
+        }
+
+        public static void SendUpdate(Player player, IPEndPoint endpoint)
+        {
+            if (board.players.Count() <= 0)
+                return;
+
+            var bytes = new List<byte>() { 102 };
+            bytes.AddRange(BitConverter.GetBytes((ushort)board.players.Count()));
+
+            bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(player.center.Item1)));
+            bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(player.center.Item2)));
+            bytes.AddRange(BitConverter.GetBytes((ushort)player.radius));
+
+            var name = players.Reverse[player].Item2;
+            int nameLentgh = name.Length;
+            byte[] nameBytes = ascii.GetBytes(name);
+
+            bytes.Add((byte)nameLentgh);
+            bytes.AddRange(nameBytes);
+
+            foreach (var p in board.players)
+            {
+                if (p == player)
+                    continue;
+
+                bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(p.center.Item1)));
+                bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(p.center.Item2)));
+                bytes.AddRange(BitConverter.GetBytes((ushort)p.radius));
+
+                name = players.Reverse[p].Item2;
+                nameLentgh = name.Length;
+                nameBytes = ascii.GetBytes(name);
+
+
+                bytes.Add((byte)nameLentgh);
+                bytes.AddRange(nameBytes);
             }
 
-            if (state.Item2.goneEntities.Count() > 0)
-            {
-                bytes = new List<byte>() { 101 };
-                bytes.AddRange(BitConverter.GetBytes((ushort)state.Item2.goneEntities.Count()));
+            UDPClient.BeginSend(bytes.ToArray(), bytes.Count(), endpoint, UDPSendCallback, null);
+        }
+        public static void SendDisappear(HashSet<Cell> entities, IPEndPoint endPoint)
+        {
+            if (entities.Count() <= 0)
+                return;
+            var bytes = new List<byte>() { 101 };
+            bytes.AddRange(BitConverter.GetBytes((ushort)entities.Count()));
 
-                foreach (var entity in state.Item2.goneEntities)
+            foreach (var entity in entities)
+            {
+                int nameLentgh = 0;
+                byte[] nameBytes = null;
+                if (typeof(Player).IsInstanceOfType(entity))
                 {
+                    var name = players.Reverse[(Player)entity].Item2;
+                    nameLentgh = name.Length;
+                    nameBytes = ascii.GetBytes(name);
+                }
+                else if (typeof(Food).IsInstanceOfType(entity))
+                {
+                    var name = $"#{((Food)entity).Id}";
+                    nameLentgh = name.Length;
+                    nameBytes = ascii.GetBytes(name);
+                }
+                bytes.Add((byte)nameLentgh);
+                bytes.AddRange(nameBytes);
+            }
+            UDPClient.BeginSend(bytes.ToArray(), bytes.Count(), endPoint, UDPSendCallback, null);
+        }
+        public static void SendAppear(List<HashSet<Cell>> listEntities, IPEndPoint endpoint)
+        {
+            if (listEntities.Count() <= 0)
+                return;
+
+            var bytes = new List<byte>() { 100 };
+            bytes.AddRange(BitConverter.GetBytes((ushort)listEntities.Count()));
+
+            foreach (var entities in listEntities)
+                foreach (var entity in entities)
+                {
+                    bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(entity.center.Item1)));
+                    bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(entity.center.Item2)));
+                    bytes.AddRange(BitConverter.GetBytes((ushort)entity.radius));
                     int nameLentgh = 0;
                     byte[] nameBytes = null;
                     if (typeof(Player).IsInstanceOfType(entity))
@@ -116,47 +165,8 @@ namespace Server
                     bytes.Add((byte)nameLentgh);
                     bytes.AddRange(nameBytes);
                 }
-                UDPClient.BeginSend(bytes.ToArray(), bytes.Count(), User.Item1, UDPSendCallback, null);
-            }
+            UDPClient.BeginSend(bytes.ToArray(), bytes.Count(), endpoint, UDPSendCallback, null);
 
-            if (board.players.Count() > 0)
-            {
-                var player = state.Item1;
-                bytes = new List<byte>() { 102 };
-                bytes.AddRange(BitConverter.GetBytes((ushort)board.players.Count()));
-
-                bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(player.center.Item1)));
-                bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(player.center.Item2)));
-                bytes.AddRange(BitConverter.GetBytes((ushort)player.mass));
-                int nameLentgh = 0;
-                byte[] nameBytes = null;
-            
-                var name = players.Reverse[player].Item2;
-                nameLentgh = name.Length;
-                nameBytes = ascii.GetBytes(name);
-                
-                bytes.Add((byte)nameLentgh);
-                bytes.AddRange(nameBytes);
-
-                foreach (var p in board.players)
-                {
-                    if (player == state.Item1)
-                        continue;
-
-                    bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(p.center.Item1)));
-                    bytes.AddRange(BitConverter.GetBytes((ushort)Math.Round(p.center.Item2)));
-                    bytes.AddRange(BitConverter.GetBytes((ushort)p.mass));
-
-                    name = players.Reverse[p].Item2;
-                    nameLentgh = name.Length;
-                    nameBytes = ascii.GetBytes(name);
-
-
-                    bytes.Add((byte)nameLentgh);
-                    bytes.AddRange(nameBytes);
-                }
-
-            }
         }
 
         static void UDPSendCallback(IAsyncResult result)
@@ -179,20 +189,25 @@ namespace Server
                 string name;
                 switch (data[0]) {
                     case 254:
-                        players.Add((clientEndPoint, 
-                            ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array)),
-                            spawnPlayer());
+                        var newName = ascii.GetString(data, 2, data[1]);
+                        var newPlayer = spawnPlayer();
+                        players.Add((clientEndPoint, newName),
+                            newPlayer);
+                        Task.Run(() => SendAppear(new List<HashSet<Cell>>() { newPlayer.getLoadedArea() }, clientEndPoint));
+                        Console.WriteLine($"Connected {newName} ip - {clientEndPoint}");
                         break;
 
                     case 255:
-                        name = ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array);
+                        name = ascii.GetString(data, 2, data[1]);
                         player = players.Forward[(clientEndPoint, name)];
                         removePlayer(player);
                         players.Remove(player);
+
+                        Console.WriteLine($"Connected {name} ip - {clientEndPoint}");
                         break;
 
                     case 102:
-                        name = ascii.GetString(new ArraySegment<byte>(data, 2, 2 + data[1] - 1).Array);
+                        name = ascii.GetString(data, 2, data[1]);
                         player = players.Forward[(clientEndPoint, name)];
                         var offset = 2 + data[1] - 1;
                         (float, float) moveVec = (
@@ -200,13 +215,13 @@ namespace Server
                             BitConverter.ToSingle(data, offset + sizeof(float))
                             );
                         player.moveVec = moveVec;
+                        Console.WriteLine($"Updating {name} ip - {clientEndPoint}");
                         break;
                 }   
             }
             catch (Exception error)
             {
-                Console.WriteLine("-- UDPRecieveCallback Error --");
-                Console.WriteLine(error.Message);
+                Console.WriteLine($"-- UDPRecieveCallback Error --\n{error.StackTrace}\n{error.Message}\n");
             }
 
         }

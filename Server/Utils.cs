@@ -61,19 +61,18 @@ namespace Server
                 var lastFrame = _time;
                 _time = Process.GetCurrentProcess().StartTime;
                 return (float)(_time - lastFrame).TotalSeconds;
-
             }
             private set { }
         }
         public const int PLAYER_MASS = 100;
         public static double getRadius(int mass)
         {
-            return Math.Log(1 + mass / 5) * 2;
+            return Math.Log(mass+1) * Math.Sqrt(mass/4);
         }
 
         public static double getSpeed(int mass)
         {
-            return Math.Log10(1 + mass / 5) * 2;
+            return 1/mass * 1000 * 8;
         }
 
         public static (int, int) getSectorNum((float, float) coords)

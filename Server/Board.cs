@@ -21,7 +21,11 @@ namespace Server
             sectorsNum = (int)Math.Round(size / Utils.getRadius(Utils.PLAYER_MASS) / 8);
             Sector.size = (float)size / sectorsNum;
             sectors = new Sector[sectorsNum, sectorsNum];
-            fillSectors(ref sectors);
+
+            for (int i = 0; i < sectorsNum; i++)
+                for (int j = 0; j < sectorsNum; j++)
+                    sectors[i, j] = new Sector();
+
             rand = new Random();
             Cell.board = this;
         }
@@ -34,15 +38,6 @@ namespace Server
                 var coords = (rand.Next(0, size * 10) / 10f, rand.Next(0, size * 10) / 10f);
                 spawnEntity<Food>(coords);
             }
-        }
-
-        public void fillSectors(ref Sector[,] sectors)
-        {
-            for (int i = 0; i < sectorsNum; i++)
-                for (int j = 0; j < sectorsNum; j++)
-                {
-                    sectors[i, j] = new Sector();
-                }
         }
 
         public Player spawnPlayer()

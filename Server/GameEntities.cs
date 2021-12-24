@@ -10,7 +10,6 @@ namespace Server
         public List<HashSet<Cell>> newEntities = new List<HashSet<Cell>>();
         public HashSet<Cell> goneEntities = new HashSet<Cell>();
         public HashSet<Cell> loadedEntities = new HashSet<Cell>();
-
     }
 
     class Sector
@@ -18,11 +17,14 @@ namespace Server
         public static float size;
         //public (int, int) coords;
         public HashSet<Cell> entities = new HashSet<Cell>();
-
     }
     abstract class Cell
     {
         public static Board board;
+
+        private static ushort id = 0;
+        private ushort _id;
+        public ushort Id { get => _id; private set => _id = id++; }
 
         public float radius;
         public (float, float) center;
@@ -38,15 +40,10 @@ namespace Server
                 radius = (float)Utils.getRadius(_mass);
             }
         }
-
     }
 
     class Player : Cell
     {
-        private static ushort id = 0;
-        private ushort _id;
-        public ushort Id { get => _id; private set => _id = id++; }
-
         public HashSet<Sector> loadedArea;
         public (float, float) moveVec = (0f,0f);
         public Player((float, float) coords)
@@ -55,13 +52,22 @@ namespace Server
             mass = Utils.PLAYER_MASS;
             loadedArea = board.getVisibleArea(this);
         }
+        public HashSet<Cell> getLoadedArea()
+        {
+            var area = new HashSet<Cell>();
+            foreach(var sec in loadedArea)
+            {
+                area.UnionWith(sec.entities);
+            }
+            return area;
+        }
         public NewState Move(float frameScale)
         {
             var result = new NewState();
             var newCoords = Utils.Add(center, Utils.Multiply(moveVec,frameScale));
             if (Utils.getSectorNum(center) != Utils.getSectorNum(newCoords))
             {
-                var newArea = board.getVisibleArea(this);
+                var newArea = board.getVisibleArea(this, (int)Math.Floor(radius * 2.5f / Sector.size) + 1);
                 foreach (var sec in newArea.Except(loadedArea))
                     result.goneEntities.UnionWith(sec.entities);
                 foreach (var sec in newArea.Intersect(loadedArea))
@@ -98,9 +104,6 @@ namespace Server
 
     class Food : Cell
     {
-        private static ushort id = 0;
-        private ushort _id;
-        public ushort Id { get => _id; private set => _id = id++; }
         public Food((float, float) coords)
         {
             center = coords;
