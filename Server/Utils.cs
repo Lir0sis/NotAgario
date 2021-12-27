@@ -53,13 +53,13 @@ namespace Server
     }
     static class Utils
     {
-        private static DateTime _time = Process.GetCurrentProcess().StartTime;
+        private static DateTime _time = DateTime.UtcNow;
         public static float FrameTime
         {
             get
             {
                 var lastFrame = _time;
-                _time = Process.GetCurrentProcess().StartTime;
+                _time = DateTime.UtcNow;
                 return (float)(_time - lastFrame).TotalSeconds;
             }
             private set { }

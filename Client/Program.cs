@@ -1,16 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
 using SDL2;
 namespace Client
 {
     class Program
     {
-        static readonly (int, int) windowSize = (640, 640);
+        public static readonly (int, int) windowSize = (640, 640);
        // static int FPS = 120; 
         static int quit = 0;
         static (int, int) mousePos = (0,0);
-        static (Cell, string)? player = null;
+
         static IntPtr window;
         static IntPtr renderer;
 
@@ -29,8 +30,9 @@ namespace Client
                         //Console.WriteLine(mousePos);
                         break;
 
-                    case SDL.SDL_EventType.SDL_QUIT:
-                        quit = 1;
+                    case SDL.SDL_EventType.SDL_WINDOWEVENT:
+                        if(SDL.SDL_WindowEventID.SDL_WINDOWEVENT_CLOSE == @event.window.windowEvent)
+                            quit = 1;
                         break;
                 }
             }
@@ -45,8 +47,8 @@ namespace Client
             {
                 if (!NetCode.isInitialized)
                 {
-                    IpAdress = Console.ReadLine();
-                    port = int.Parse(Console.ReadLine());
+                    IpAdress = "127.0.0.1";//"5.248.192.64";//Console.ReadLine();
+                    port = 7777;// int.Parse(Console.ReadLine());
                     username = Console.ReadLine();
                 }
 
@@ -68,10 +70,20 @@ namespace Client
                 if (renderer == IntPtr.Zero)
                     renderer = SDL.SDL_CreateRenderer(window, -1, SDL.SDL_RendererFlags.SDL_RENDERER_ACCELERATED);
 
+                //1
+                //cells.Add("#22", new Cell(22, "", (1, 1), 9));
+                //cells.Add("#25", new Cell(25, "", (1, 8), 9));
+                //cells.Add("#23", new Cell(23, "", (22, 1), 9));
+                //
+                //NetCode.player = (new Cell(223, "valik", (4, 17), 12), "valik#223");
+                //
+                //cells.Add(NetCode.player.Item2, NetCode.player.Item1);
+                //1
+
                 while (quit == 0 || NetCode.isConnected)
                 {
                     PollEvents();
-                    if (NetCode.isConnected && NetCode.isReadToPlay)
+                    if (NetCode.isConnected && NetCode.isReadyToPlay)
                     {
                         NetCode.Update(mousePos);
 
@@ -80,12 +92,14 @@ namespace Client
 
                         var widest = Math.Max(windowSize.Item1, windowSize.Item2);
                         var allowed = Math.Min(widest, 840);
-                        var coef = allowed / Math.Max(widest, 840) * player.Value.Item1.radius / 70;
-                        var offset = (windowSize.Item1 * coef, windowSize.Item2 * coef);
+                        float coef = (float)allowed / Math.Max(widest, 840) /** NetCode.playerRadius / 20f*/;
+                        var offset = windowSize; //((int)Math.Round(windowSize.Item1 * coef), (int)Math.Round(windowSize.Item2 * coef));
 
-                        foreach (var cell in cells)
+                        var list = cells.ToList();
+
+                        foreach (var cell in list)
                         {
-                            cell.Value.Draw(renderer, player.Value.Item1.center, offset, coef);
+                            cell.Value.Draw(renderer, NetCode.playerCenter, offset, coef);
                         }
 
                         SDL.SDL_RenderPresent(renderer);

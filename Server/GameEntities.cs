@@ -24,12 +24,17 @@ namespace Server
 
         private static ushort id = 0;
         private ushort _id;
-        public ushort Id { get => _id; private set => _id = id++; }
+        public ushort Id { get => _id; private set { _id = value; } }
 
         public float radius;
         public (float, float) center;
         private int _mass;
         public float speed;
+
+        protected Cell()
+        {
+            Id = id++;
+        }
 
         public int mass {
             get => _mass; 
@@ -50,7 +55,7 @@ namespace Server
         {
             center = coords;
             mass = Utils.PLAYER_MASS;
-            loadedArea = board.getVisibleArea(this);
+            loadedArea = board.getVisibleArea(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
         }
         public HashSet<Cell> getLoadedArea()
         {
@@ -64,22 +69,27 @@ namespace Server
         public NewState Move(float frameScale)
         {
             var result = new NewState();
-            var newCoords = Utils.Add(center, Utils.Multiply(moveVec,frameScale));
+            var newCoords = Utils.Add(center, Utils.Multiply(moveVec, frameScale));
+
+            newCoords = (
+                newCoords.Item1 < 0 ? 0 : newCoords.Item1 >= board.Size ? board.Size : newCoords.Item1,
+                newCoords.Item2 < 0 ? 0 : newCoords.Item2 >= board.Size ? board.Size : newCoords.Item2
+                );
+
             if (Utils.getSectorNum(center) != Utils.getSectorNum(newCoords))
             {
-                var newArea = board.getVisibleArea(this, (int)Math.Floor(radius * 2.5f / Sector.size) + 1);
-                foreach (var sec in newArea.Except(loadedArea))
+                var newArea = board.getVisibleArea(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
+                foreach (var sec in loadedArea.Except(newArea))
                     result.goneEntities.UnionWith(sec.entities);
                 foreach (var sec in newArea.Intersect(loadedArea))
                     result.loadedEntities.UnionWith(sec.entities);
-                foreach (var sec in loadedArea.Except(newArea))
+                foreach (var sec in newArea.Except(loadedArea))
                     result.newEntities.Add(sec.entities);
-                
+
                 loadedArea = newArea;
             }
             else
-                foreach(var sec in loadedArea)
-                    result.loadedEntities.UnionWith(sec.entities);
+                result.loadedEntities = getLoadedArea();
             center = newCoords;
             return result;
         }
@@ -95,6 +105,7 @@ namespace Server
                     {
                         sec.entities.Remove(entity);
                         board.goneEntities.Add(entity);
+                        mass += entity.mass / 5;
                     }
                 }
             }

@@ -10,16 +10,16 @@ namespace Server
         public HashSet<Cell> newEntities = null;
         Random rand;
         int sectorsNum;
-        int size;
+        public int Size { get; private set; }
 
         Sector[,] sectors;
         public List<Player> players = new List<Player>();
 
         public Board()
         {
-            size = 2000;
-            sectorsNum = (int)Math.Round(size / Utils.getRadius(Utils.PLAYER_MASS) / 8);
-            Sector.size = (float)size / sectorsNum;
+            Size = 2000;
+            sectorsNum = (int)Math.Round(Size / (Utils.getRadius(Utils.PLAYER_MASS) * 16) );
+            Sector.size = (float)Size / sectorsNum;
             sectors = new Sector[sectorsNum, sectorsNum];
 
             for (int i = 0; i < sectorsNum; i++)
@@ -32,10 +32,10 @@ namespace Server
 
         public void foodFillBoard()
         {
-            var startFood = rand.Next(140, 250);
+            var startFood = rand.Next(Size/3, Size/2);
             for (int i = 0; i < startFood; i++)
             {
-                var coords = (rand.Next(0, size * 10) / 10f, rand.Next(0, size * 10) / 10f);
+                var coords = (rand.Next(0, Size * 10) / 10f, rand.Next(0, Size * 10) / 10f);
                 spawnEntity<Food>(coords);
             }
         }
@@ -47,7 +47,7 @@ namespace Server
 
             while (!IsSpawnable)
             {
-                var coords = (rand.Next(0, size * 10) / 10f, rand.Next(0, size * 10) / 10f);
+                var coords = (rand.Next(0, Size * 10) / 10f, rand.Next(0, Size * 10) / 10f);
                 IsSpawnable = true;
 
                 var sectorsCoords = Utils.getSectorNum(coords);
@@ -87,6 +87,11 @@ namespace Server
         {
             newEntities = new HashSet<Cell>();
             goneEntities = new HashSet<Cell>();
+            //if (rand.NextDouble()> 0.95)
+            //    newEntities.Add(spawnEntity<Food>((
+            //        rand.Next(0, Size * 10) / 10f, 
+            //        rand.Next(0, Size * 10) / 10f
+            //    )));
 
             var states = new List<(Player, NewState)>();
 
@@ -95,10 +100,10 @@ namespace Server
             {
                 states.Add((player, player.Move(frameScale)));
             }
-            foreach (var player in players)
-            {
-                player.Update();
-            }
+            //foreach (var player in players)
+            //{
+            //    player.Update();
+            //}
 
             return states;
         }
@@ -113,11 +118,11 @@ namespace Server
         {
             HashSet<Sector> res = new HashSet<Sector>();
             var sectorCoords = Utils.getSectorNum(entity.center);
-            for (int i = sectorCoords.Item1 - radius; i < sectorCoords.Item1 + radius; i++)
+            for (int i = sectorCoords.Item1 - radius; i <= sectorCoords.Item1 + radius; i++)
             {
                 if (i > sectorsNum - 1 || i < 0)
                     continue;
-                for (int j = sectorCoords.Item2 - radius; j < sectorCoords.Item2 + radius; j++)
+                for (int j = sectorCoords.Item2 - radius; j <= sectorCoords.Item2 + radius; j++)
                 {
                     if (j > sectorsNum - 1 || j < 0)
                         continue;

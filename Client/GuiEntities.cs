@@ -13,36 +13,39 @@ namespace Client
         public int radius;
         //public SDL.SDL_FRect image;
 
-        public Cell(int id, string name, (int, int) coords, int radius)
+        public Cell(string username, (int, int) coords, int radius)
         {
-            this.name = name;
+            var name_id = username.Split("#");
+            this.name = name_id[0];
             this.center = coords;
             this.radius = radius;
-            this.id = id;
+            this.id = int.Parse(name_id[1]);
             //this.image = new SDL.SDL_FRect { x = coords.Item1-radius, y = coords.Item2 - radius, w = radius*2, h = radius * 2 };
         }
 
         public void Draw(IntPtr renderer, (int, int) center, (int, int) offset, float visionScale)
         {
-            var dx = this.center.Item1 - center.Item1;
-            var dy = this.center.Item2 - center.Item2;
+            float dx = (this.center.Item1 - center.Item1) * visionScale;
+            float dy = (this.center.Item2 - center.Item2) * visionScale;
 
-            var scaledR = radius * visionScale;
+            float scaledR = radius * visionScale;
 
             if (Math.Abs(dx) - scaledR > offset.Item1 || Math.Abs(dy) - scaledR > offset.Item2)
                 return;
 
-            if (name[0] == '#')
+            if (name == "")
                 SDL.SDL_SetRenderDrawColor(renderer, 100, 255, 50, 255);
             else
                 SDL.SDL_SetRenderDrawColor(renderer, 100, 100, 255, 255);
+
+            var windowsSize = Program.windowSize;
 
             var scaledRect = new SDL.SDL_FRect()
             {
                 h = scaledR * 2,
                 w = scaledR * 2,
-                x = dx - scaledR,
-                y = dy - scaledR
+                x = windowsSize.Item1/2 + dx - scaledR,
+                y = windowsSize.Item2/2 + dy - scaledR
             };
 
             SDL.SDL_RenderDrawRectF(renderer, ref scaledRect);
