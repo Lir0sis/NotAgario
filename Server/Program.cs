@@ -14,7 +14,9 @@ namespace Server
         enum ActionApplied
         {
             ADD,
-            REMOVE,
+            REMOVE_PLAYER,
+            REMOVE_CLIENT,
+            REMOVE_SPECTATOR,
             UPDATE
         }
 
@@ -24,7 +26,8 @@ namespace Server
 
         static ClientsMap<(IPEndPoint, string), Player> players;
         static HashSet<IPEndPoint> spectators;
-        static Dictionary<IPEndPoint, Queue<(uint, byte[])>> playersPackets;
+        static Dictionary<IPEndPoint, Queue<(uint, byte[])>> playersPackets = 
+            new Dictionary<IPEndPoint, Queue<(uint, byte[])>>();
 
         static ConcurrentQueue<(ActionApplied, dynamic[])> queuedDicts =
             new ConcurrentQueue<(ActionApplied, dynamic[])>();
@@ -32,33 +35,46 @@ namespace Server
         static uint _packetId = 0;
         static uint PacketId { get => _packetId++; }
 
-        static int localPort = 7777;
         static UdpClient UDPClient;
 
-        static readonly float START_SLEEP = 5;
-        static float untilStart;
-        static readonly float FPS = 30;
+        static readonly int POSTGAME_TIME = 5;
 
-        static void Main(string[] args)
-        {
+        public static int ServerSleepTime { get; private set; }
+        static float untilStart;
+        static float untilEnd;
+        static readonly float FPS = 30;
+        public static int BoardSize { get; private set; }               
+        public static int MinPlayers { get; private set; }
+
+        static void Main(string[] args)                                         
+        { 
+            int port = int.Parse(args[0]);
+            BoardSize = int.Parse(args[1]);
+            ServerSleepTime = int.Parse(args[2]);
+            MinPlayers = int.Parse(args[3]);
+
             InitGame(new ClientsMap<(IPEndPoint, string), Player>(), new HashSet<IPEndPoint>());
 
-            UDPClient = new UdpClient(localPort);
+            UDPClient = new UdpClient(port);
             UDPClient.DontFragment = true;
             UDPClient.BeginReceive(UDPRecieveCallback, null);
 
             while (true)
             {
-                if (players.Count >= 2)
+                if (players.Count >= MinPlayers)
                 {
                     if (untilStart > 0)
                         untilStart -= Utils.FrameTime;
                 }
-                else
-                    untilStart = START_SLEEP;
+                else if (players.Count == 1 && untilStart <= 0 && untilEnd > 0)
+                {
+                    untilEnd -= Utils.FrameTime;
+                }
+                else if (players.Count < MinPlayers && untilStart < ServerSleepTime && untilEnd == POSTGAME_TIME)
+                    untilStart = ServerSleepTime;
 
                 float sleepTime = (1f / FPS - Utils.FrameTime) * 1000;
-                if(sleepTime > 10)
+                if(sleepTime > 7)
                     System.Threading.Thread.Sleep((int)sleepTime);
                 Update();
             }
@@ -66,28 +82,29 @@ namespace Server
         }
         public static void InitGame(ClientsMap<(IPEndPoint, string), Player> prevClients, HashSet<IPEndPoint> spectators)
         {
-            untilStart = START_SLEEP;
+            untilStart = ServerSleepTime;
+            untilEnd = POSTGAME_TIME;
             players = prevClients;
             Program.spectators = spectators;
-            playersPackets = new Dictionary<IPEndPoint, Queue<(uint, byte[])>>();
             if (spectators.Count > 0)
             {
                 foreach(var endPoint in spectators)
                 {
-                    Task.Run(() => Disconnect(endPoint));
+                    Task.Run(() => SendDisconnect(endPoint));
                 }
             }
             spectators = new HashSet<IPEndPoint>();
 
-            board = new Board();
+            board = new Board(BoardSize);
             board.FoodFillBoard();
             if (players.Count > 0)
                 foreach (var p in players)
                 {
-                    Task.Run(() => Disconnect(p.Key.Item1));
+                    Task.Run(() => SendDisconnect(p.Key.Item1));
                 }
             
             players = new ClientsMap<(IPEndPoint, string), Player>();
+            leaderBoard = new List<(int, string)>();
         }
         public static Player SpawnPlayer()
         {
@@ -95,57 +112,91 @@ namespace Server
         }
         public static void RemovePlayer(Player player)
         {
-            board.RemovePlayer(player);
+            //board.RemovePlayer(player);
             var key = players.Reverse[player];
-            players.Remove(key);
-            leaderBoard.Add((player.mass, key.Item2));
+            
+            if (untilStart <= 0)
+            {
+                leaderBoard.Add((player.mass, key.Item2));
 
-            spectators.Add(key.Item1);
-            Task.Run(() => { SendSpec(players.Reverse[board.leadingPlayer].Item2, key.Item1); });
+                spectators.Add(key.Item1);
+                Task.Run(() => { SendSpec(players.Reverse[board.leadingPlayer].Item2, key.Item1); });
+            }
         }
-        public static void Disconnect(IPEndPoint endPoint)
+        public static void SendDisconnect(IPEndPoint endPoint)
         {
-            spectators.Remove(endPoint);
-            players.RemoveByLambda(key => key.Item1 == endPoint);
-            playersPackets.Remove(endPoint);
+            var key = players.Forward.FindByLambda(key => key.Item1 == endPoint).Item1;
+            if (spectators.Contains(endPoint))
+                queuedDicts.Enqueue((ActionApplied.REMOVE_SPECTATOR, new dynamic[] { endPoint }));
+            else if (key != (null, null))
+                queuedDicts.Enqueue((ActionApplied.REMOVE_PLAYER,
+                    new dynamic[] { players.Forward[key] }));
+            else return;
+
+            var bytes = new List<byte>() { 255 };
+            var packetId = PacketId;
+            bytes.AddRange(BitConverter.GetBytes(packetId));
+
+            var arr = bytes.ToArray();
+            UDPClient.BeginSend(arr, arr.Length, endPoint, UDPSendCallback, arr);
+            playersPackets[endPoint].Enqueue((packetId, arr));
         }
         public static void Update()
         {
-            if (players.Count > 1 && untilStart <= 0)
+            if (untilStart <= 0)
             {
                 List<Task> tasks = new List<Task>();
                 var oldLeader = board.leadingPlayer;
                 var newStates = board.UpdateBoard(Utils.FrameTime);
+
+                foreach (Player p in board.frameGonePlayers)
+                    RemovePlayer(p);
+
                 foreach (var state in newStates)
                 {
-                    tasks.Add(Task.Run(() => SendData(state)));
+                    if(!board.frameGonePlayers.Contains(state.Item1))
+                        tasks.Add(Task.Run(() => SendData(state)));
                 }
                 Task.WaitAll(tasks.ToArray()); 
-                foreach (Player p in board.frameGonePlayers)
-                    queuedDicts.Enqueue((ActionApplied.REMOVE, new dynamic[] { p }));
-
-                if (oldLeader != board.leadingPlayer)
-                {
-                    foreach (var spec in spectators)
-                    {
-                        Task.Run(() => { SendSpec(players.Reverse[board.leadingPlayer].Item2, spec); });
-                    }
-                }
 
                 SyncDict();
+                
+                if (oldLeader != board.leadingPlayer && board.leadingPlayer != null)
+                {
+                    var leadingPlayer = board.leadingPlayer;
+                    foreach (var spec in spectators)
+                    {
+                        Task.Run(() => { SendSpec(players.Reverse[leadingPlayer].Item2, spec); });
+                    }
+                }
             }
             
-            if (untilStart <= 0 && players.Count <= 1)
+            if (untilStart <= 0 && players.Count < MinPlayers)
             {
-                leaderBoard.Add((board.leadingPlayer.mass, players.Reverse[board.leadingPlayer].Item2));
-                leaderBoard.Sort();
-
-                foreach (var spec in spectators)
+                if (board.leadingPlayer != null && untilEnd == POSTGAME_TIME)
                 {
-                    Task.Run(() => SendLeaderBoard(spec));
+                    leaderBoard.Add((board.leadingPlayer.mass, players.Reverse[board.leadingPlayer].Item2));
+                    leaderBoard.Sort();
+
+                    foreach (var spec in spectators)
+                        Task.Run(() => SendLeaderBoard(spec));
+
+                    Task.Run(() => SendLeaderBoard(players.Reverse[board.leadingPlayer].Item1)).Wait();
+                    board.leadingPlayer = null;
                 }
-                Task.Run(() => SendLeaderBoard(players.Reverse[board.leadingPlayer].Item1)).Wait();
-                InitGame(players, spectators);
+                if( untilEnd <= 0)
+                    InitGame(players, spectators);
+                
+            }
+            foreach(var p in playersPackets)
+            {
+                if (p.Value.Count <= 0)
+                    continue;
+                var packet = p.Value.Peek();
+                var bytes = packet.Item2;
+                if (bytes == null)
+                    continue;
+                UDPClient.BeginSend(bytes, bytes.Length, p.Key, UDPSendCallback, bytes);
             }
             Utils.UpdateTime();
         }
@@ -159,11 +210,17 @@ namespace Server
                 (ActionApplied, dynamic[]) listOfActions;
                 while (!queuedDicts.TryDequeue(out listOfActions)) { };
 
-                if (listOfActions.Item1 == ActionApplied.REMOVE)
+                if (listOfActions.Item1 == ActionApplied.REMOVE_PLAYER)
                 {
                     Player player = listOfActions.Item2[0];
                     if (players.Reverse.ContainsKey(player))
                         RemovePlayer(player);
+                }
+                else if (listOfActions.Item1 == ActionApplied.REMOVE_SPECTATOR)
+                {
+                    var endPoint = listOfActions.Item2[0];
+                    if (spectators.Contains(endPoint))
+                        spectators.Remove(endPoint);
                 }
                 else if (listOfActions.Item1 == ActionApplied.UPDATE)
                 {
@@ -172,6 +229,14 @@ namespace Server
 
                     if (players.Reverse.ContainsKey(player))
                         player.moveVec = moveVec;
+                }
+                else if (listOfActions.Item1 == ActionApplied.REMOVE_CLIENT)
+                {
+                    ((IPEndPoint, string), Player) record = listOfActions.Item2[0];
+                    //(float, float) moveVec = listOfActions.Item2[1];
+
+                    if (players.Forward.ContainsKey(record.Item1))
+                        players.Remove(record.Item1);
                 }
             }
         }
@@ -183,13 +248,16 @@ namespace Server
             if(state.Item1 == board.leadingPlayer)
                 clients.UnionWith(spectators);
 
-            state.Item2.goneEntities.UnionWith(state.Item2.loadedEntities.Intersect(board.frameGoneEntities));
-            state.Item2.goneEntities.UnionWith(state.Item2.loadedEntities.Intersect(board.frameGonePlayers));
-            state.Item2.newEntities.Add(state.Item2.loadedEntities.Intersect(board.players).ToHashSet());
+            var updatedLoadedEntities = new HashSet<Cell>();
+            foreach (var s in state.Item2.loadedEntitiesSectors)
+                updatedLoadedEntities.UnionWith(s);
+
+            state.Item2.newEntities.Add(updatedLoadedEntities.Except(state.Item2.loadedEntities).ToHashSet());
+            var goneEntities = (state.Item2.loadedEntities.Except(updatedLoadedEntities)).ToHashSet();
 
             SendAppear(state.Item2.newEntities, clients);
             SendUpdate(clients);
-            SendDisappear(state.Item2.goneEntities, clients);
+            SendDisappear(goneEntities, clients);
         }
         public static void SendUpdate(HashSet<IPEndPoint> endPoints)
         {
@@ -269,9 +337,10 @@ namespace Server
         }
         public static void SendLeaderBoard(IPEndPoint endPoint)
         {
-            var bytes = new List<byte>() { 254 };
+            var bytes = new List<byte>() { 210 };
             var packetId = PacketId;
             bytes.AddRange(BitConverter.GetBytes(packetId));
+            bytes.AddRange(BitConverter.GetBytes((ushort)leaderBoard.Count));
             foreach (var l in leaderBoard)
             {
                 bytes.AddRange(BitConverter.GetBytes((ushort)l.Item1));
@@ -381,7 +450,7 @@ namespace Server
             byte[] data = UDPClient.EndReceive(result, ref clientEndPoint);
 
             UDPClient.BeginReceive(UDPRecieveCallback, null);
-            Console.WriteLine(clientEndPoint + " " + data[0]);
+            //Console.WriteLine(clientEndPoint + " " + data[0]);
 
             Player player = null;
             string name = "";
@@ -407,7 +476,7 @@ namespace Server
                         packetId = BitConverter.ToUInt32(data, 2 + data[1]);
                         break;
                     case 254:
-                        if (untilStart <= 0)
+                        if (untilStart <= 0 && players.Count >= MinPlayers)
                         {
                             spectators.Add(clientEndPoint);
                             playersPackets.Add(clientEndPoint, new Queue<(uint, byte[])>());
@@ -416,8 +485,8 @@ namespace Server
                             break;
                         }
 
-                        player = players.Forward.FindByLambda(key => 
-                            key.Item1 == clientEndPoint
+                        player = players.Forward.FindByLambda(key =>
+                            key.Item1.Equals(clientEndPoint)
                         ).Item2;
                         
                         if (player == null)
@@ -438,11 +507,8 @@ namespace Server
 
                     case 255:
                         name = Encoding.ASCII.GetString(data, 2, data[1]);
-                        if (players.Forward.ContainsKey((clientEndPoint, name)))
-                            queuedDicts.Enqueue((ActionApplied.REMOVE, 
-                                new dynamic[] { players.Forward[(clientEndPoint, name)] }));
-                        Disconnect(clientEndPoint);
 
+                        SendDisconnect(clientEndPoint);
                         Console.WriteLine($"Disconnected {name} ip - {clientEndPoint}");
                         break;
                 }
@@ -467,19 +533,37 @@ namespace Server
                 packets.Dequeue();
                 if (lostPacket.Item2[0] == 254)
                 {
-                    player = players.Forward[(clientEndPoint, name)];
-                    Task.Run(() => SendAppear(new List<HashSet<Cell>>() { player.getLoadedArea() }, 
-                        new HashSet<IPEndPoint>() { clientEndPoint }));
+                    //player = players.Forward[(clientEndPoint, name)];
+
+                    foreach (var p in players)
+                    {
+                        player = p.Value;
+                        Task.Run(() => SendAppear(new List<HashSet<Cell>>() { player.getLoadedEntities() },
+                            new HashSet<IPEndPoint>() { p.Key.Item1 }));
+                    }
                 }
                 else if (lostPacket.Item2[0] == 240)
                 {
-                    Task.Run(() => SendAppear(new List<HashSet<Cell>>() { board.leadingPlayer.getLoadedArea() },
-                        new HashSet<IPEndPoint>() { clientEndPoint }));
+                    if (board.leadingPlayer == null)
+                        return;
+
+                    var appearList = new List<HashSet<Cell>>() { board.leadingPlayer.getLoadedEntities() };
+                    var endpoints = new HashSet<IPEndPoint>() { clientEndPoint };
+                    Task.Run(() => SendAppear(appearList,
+                        endpoints));
+
+                    var record = players.Forward.FindByLambda(key => 
+                         key.Item1.Equals(clientEndPoint)
+                    );
+                    queuedDicts.Enqueue((ActionApplied.REMOVE_CLIENT, 
+                        new dynamic[] { record }));
                 }
             }
             else
             {
                 var bytes = lostPacket.Item2;
+                if (bytes == null)
+                    return;
                 UDPClient.BeginSend(bytes, bytes.Length, clientEndPoint, UDPSendCallback, bytes);
             }
         }

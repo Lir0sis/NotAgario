@@ -8,8 +8,8 @@ namespace Server
     class NewState
     {
         public List<HashSet<Cell>> newEntities = new List<HashSet<Cell>>();
-        public HashSet<Cell> goneEntities = new HashSet<Cell>();
         public HashSet<Cell> loadedEntities = new HashSet<Cell>();
+        public List<HashSet<Cell>> loadedEntitiesSectors = new List<HashSet<Cell>>();
     }
 
     class Sector
@@ -50,21 +50,25 @@ namespace Server
     class Player : Cell
     {
         public HashSet<Sector> loadedArea;
+        public HashSet<Cell> loadedEntities;
         public (float, float) moveVec = (0f,0f);
         public Player((float, float) coords)
         {
             center = coords;
             mass = Utils.PLAYER_MASS;
             loadedArea = board.GetNeighbourSectors(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
+            loadedEntities = new HashSet<Cell>();
         }
-        public HashSet<Cell> getLoadedArea()
+        public HashSet<Cell> getLoadedEntities()
         {
             var area = new HashSet<Cell>();
             foreach(var sec in loadedArea)
             {
                 area.UnionWith(sec.entities);
             }
+            //loadedEntities = area;
             return area;
+
         }
         public NewState Move(float frameScale)
         {
@@ -79,17 +83,24 @@ namespace Server
             if (Utils.getSectorNum(center) != Utils.getSectorNum(newCoords))
             {
                 var newArea = board.GetNeighbourSectors(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
-                foreach (var sec in loadedArea.Except(newArea))
-                    result.goneEntities.UnionWith(sec.entities);
                 foreach (var sec in newArea.Intersect(loadedArea))
-                    result.loadedEntities.UnionWith(sec.entities);
+                {
+                    result.loadedEntitiesSectors.Add(sec.entities);
+                }
                 foreach (var sec in newArea.Except(loadedArea))
                     result.newEntities.Add(sec.entities);
 
+                result.loadedEntities = loadedEntities;
                 loadedArea = newArea;
+                //loadedEntities = getLoadedEntities();
             }
             else
-                result.loadedEntities = getLoadedArea();
+            {
+                foreach(var s in loadedArea)
+                    result.loadedEntitiesSectors.Add(s.entities);
+                result.loadedEntities = loadedEntities;
+                //loadedEntities = getLoadedEntities();
+            }
             center = newCoords;
             return result;
         }
@@ -103,8 +114,6 @@ namespace Server
                     var distEuclid = Math.Pow(vec.Item1, 2) + Math.Pow(vec.Item2, 2);
                     if (distEuclid <= Math.Pow(radius, 2) && radius > entity.radius)
                     {
-                        
-                        board.frameGoneEntities.Add(entity);
                         if (typeof(Player).IsInstanceOfType(entity))
                             board.frameGonePlayers.Add(entity);
                         else

@@ -32,7 +32,7 @@ namespace Server
             public T4 this[T3 index]
             {
                 get { return _dictionary[index]; }
-                set { _dictionary[index] = value; }
+                private set { _dictionary[index] = value; }
             }
 
             public bool TryGetValue(T3 key, out T4 value)

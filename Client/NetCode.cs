@@ -21,17 +21,27 @@ namespace Client
             REMOVE,
             UPDATE
         }
+        public static int TimeOutMax = 5;
+        public static DateTime lastResponse = DateTime.UtcNow;
 
         static ConcurrentQueue<(ActionApplied, List<dynamic[]>)> queuedDicts = 
             new ConcurrentQueue<(ActionApplied, List<dynamic[]>)>();
 
         static HashSet<uint> seenPackets = new HashSet<uint>();
         public static (int, int) playerCenter { get => player.Item1.center; }
-        public static int playerRadius { get => player.Item1.radius; }
+        public static int playerRadius { 
+            get
+            { 
+                if (isReadyToRender)
+                    return player.Item1.radius;
+                else
+                    return 0;
+            }
+        }
         public static bool isSpectator { get; private set; }
         public static bool isConnected { get => player.Item2 != ""; }
-        public static bool isReadyToPlay { get => player.Item1 != null; }
-        public static bool isInitialized { get => UDPClient != null; }
+        public static bool isReadyToRender { get => player.Item1 != null; }
+        public static bool SocketActive { get => UDPClient != null; }
 
         public static void Init()
         {
@@ -40,7 +50,7 @@ namespace Client
         }
         public static void Connect(string IpAddress, int port, string username)
         {
-            if (!isInitialized)
+            if (!SocketActive)
             {
                 seenPackets = new HashSet<uint>();
                 UDPClient = new UdpClient(IpAddress, port);
@@ -52,17 +62,13 @@ namespace Client
 
         public static void Disconnect()
         {
-            if (isConnected)
-            {
-                SendDisconnect();
-                UDPClient.Close();
-            }
-            UDPClient = null;
-            player = (null, "");
+            Reset();
+            Init();
         }
         public static void Reset()
         {
-            UDPClient.Close();
+            if (SocketActive)
+                UDPClient.Close();
             UDPClient = null;
             player = (null, "");
         }
@@ -127,18 +133,24 @@ namespace Client
 
         static void UDPRecieveCallback(IAsyncResult result)
         {
+            //var responseNow = DateTime.UtcNow;
+            //if ((responseNow - lastResponse).TotalSeconds >= TimeOutMax)
+            //{
+            //    SendDisconnect();
+            //    Disconnect();
+            //    return;
+            //}
             IPEndPoint clientEndPoint = new IPEndPoint(IPAddress.Any, 0);
             byte[] data = new byte[0];
             try
             {
+                if (UDPClient == null)
+                    return;
                 data = UDPClient.EndReceive(result, ref clientEndPoint);
             }
-            catch(SocketException e) 
+            catch 
             {
-                if (e.SocketErrorCode == SocketError.ConnectionReset)
-                {
-                    Disconnect();
-                }
+                Disconnect();
                 return;
             }
 
@@ -148,7 +160,6 @@ namespace Client
             var reader = new BinaryReader(stream);
 
             byte code = reader.ReadByte();
-            //Console.WriteLine(data.Length + $" {code}, {stream.Capacity} {stream.Position}");
 
             int length = -1;
             uint packetId = uint.MaxValue;
@@ -185,7 +196,7 @@ namespace Client
                         break;
 
                     case 101:
-                        while(!isReadyToPlay) { System.Threading.Thread.Sleep(5); }
+                        while(!isReadyToRender) { System.Threading.Thread.Sleep(5); }
                         packetId = reader.ReadUInt32();
                         if (!seenPackets.Contains(packetId))
                         {
@@ -208,7 +219,7 @@ namespace Client
                         break;
 
                     case 102:
-                        if (!isReadyToPlay)
+                        if (!isReadyToRender)
                             break;
                         actionList = new List<dynamic[]>();
 
@@ -232,15 +243,16 @@ namespace Client
                         packetId = reader.ReadUInt32();
                         if (!seenPackets.Contains(packetId))
                         {
-                            Console.WriteLine($"--LeaderBoard--");
+                            string res = "--- LeaderBoard ---";
                             length = reader.ReadUInt16();
                             for (int i = 0; i < length; i++)
                             {
                                 int mass = reader.ReadUInt16();
                                 string name_id = reader.ReadString();
 
-                                Console.WriteLine($"{name_id} - {mass}");
+                                res +=$"\n {name_id} - {mass}";
                             }
+                            Console.WriteLine(res);
                             seenPackets.Add(packetId);
                         }
                         SendSuccess(packetId, player.Item2);
@@ -271,7 +283,14 @@ namespace Client
                         SendSuccess(packetId, player.Item2);
                         break;
                     case 255:
-                        Reset();
+                        packetId = reader.ReadUInt32();
+                        if (!seenPackets.Contains(packetId))
+                        {
+                            Disconnect();
+                            seenPackets.Add(packetId);
+                            Console.WriteLine($"--Disconnected--");
+                        }
+                        SendSuccess(packetId, player.Item2);
                         break;
                 }
             }
@@ -281,10 +300,13 @@ namespace Client
                     $"{error.StackTrace}" +
                     $"\n{error.Message}");
             }
+
         }
 
         static void SendSuccess(uint packedId, string username)
         {
+            if (!SocketActive)
+                return;
             var name = Encoding.ASCII.GetBytes(username);
             List<byte> bytes = new List<byte>();
             bytes.Add(200);
@@ -298,6 +320,8 @@ namespace Client
 
         static void SendConnect(string Username)
         {
+            if (!SocketActive)
+                return;
             var name = Encoding.ASCII.GetBytes(Username);
             List<byte> bytes = new List<byte>() { 254 };
             bytes.Add((byte)name.Length);
@@ -307,8 +331,10 @@ namespace Client
             UDPClient.BeginSend(array, array.Length, UDPSendCallback, null);
         }
 
-        static void SendDisconnect()
+        public static void SendDisconnect()
         {
+            if (!SocketActive || !isConnected)
+                return;
             var name = Encoding.ASCII.GetBytes(player.Item2);
             List<byte> bytes = new List<byte>();
             bytes.Add(255);
@@ -321,6 +347,8 @@ namespace Client
 
         static void SendMoveVec((int, int) mousePos)
         {
+            if (!SocketActive)
+                return;
             var name = Encoding.ASCII.GetBytes(player.Item2);
             List<byte> bytes = new List<byte>();
             bytes.Add(102);

@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Server": {
+      "commandName": "Project",
+      "commandLineArgs": "7777 500 3 2"
+    }
+  }
+}

@@ -6,9 +6,10 @@ namespace Server
 {
     class Board
     {
-        public HashSet<Cell> frameGoneEntities = null;
+        //public HashSet<Cell> frameGoneEntities = null;
+        //public HashSet<Cell> frameNewEntities = null;
         public HashSet<Cell> frameGonePlayers = null;
-        public HashSet<Cell> frameNewEntities = null;
+
         Random rand;
         int sectorsNum;
         public int Size { get; private set; }
@@ -17,9 +18,9 @@ namespace Server
         Sector[,] sectors;
         public List<Player> players = new List<Player>();
 
-        public Board()
+        public Board(int boardSize = 1000)
         {
-            Size = 500;
+            Size = boardSize;
             sectorsNum = (int)Math.Round(Size / (Utils.getRadius(Utils.PLAYER_MASS) * 16) );
             Sector.size = (float)Size / sectorsNum;
             sectors = new Sector[sectorsNum, sectorsNum];
@@ -43,15 +44,9 @@ namespace Server
         }
         public List<(Player, NewState)> UpdateBoard(float frameScale)
         {
-            frameNewEntities = new HashSet<Cell>();
-            frameGoneEntities = new HashSet<Cell>();
+            //frameNewEntities = new HashSet<Cell>();
+            //frameGoneEntities = new HashSet<Cell>();
             frameGonePlayers = new HashSet<Cell>();
-
-            if (rand.NextDouble()> 0.98)
-                frameNewEntities.Add(SpawnEntity<Food>((
-                    rand.Next(0, Size * 10) / 10f, 
-                    rand.Next(0, Size * 10) / 10f
-                )));
 
             var states = new List<(Player, NewState)>();
 
@@ -59,15 +54,35 @@ namespace Server
             if(players.Count > 0) //&& (leadingPlayer == null || Math.Abs(leadingPlayer.mass - players[0].mass) > 20))
                 leadingPlayer = players[0];
 
+
+            foreach(var player in players)
+            {
+                player.loadedEntities = player.getLoadedEntities();
+            }
             foreach (var player in players)
             {
                 states.Add((player, player.Move(frameScale)));
             }
+
+            //foreach(var state in states)
+            //{
+            //    state.Item1.loadedEntities = state.Item1.getLoadedEntities();
+            //    state.Item2.loadedEntities = state.Item1.loadedEntities;
+            //}
+
             foreach (var player in players)
             {
                 player.Update();
             }
 
+            foreach (Player p in frameGonePlayers)
+                RemovePlayer(p);
+
+            if (rand.NextDouble() > 0.98)
+                SpawnEntity<Food>((
+                    rand.Next(0, Size * 10) / 10f,
+                    rand.Next(0, Size * 10) / 10f
+                ));
             return states;
         }
 

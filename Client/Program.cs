@@ -17,7 +17,7 @@ namespace Client
         public static float FrameTime { get; private set; }
 
         public static readonly (int, int) windowSize = (640, 640);
-        // static int FPS = 120; 
+
         static int quit = 0;
         static (int, int) mousePos = (0, 0);
         public static float FPS = 30;
@@ -28,7 +28,7 @@ namespace Client
         public static Dictionary<string, Cell> cells = null;
 
         static void PollEvents()
-        {
+        { 
             SDL.SDL_Event @event;
 
             while (SDL.SDL_PollEvent(out @event) == 1)
@@ -48,7 +48,7 @@ namespace Client
         static void Main(string[] args)
         {
             var r = new Random();
-            string username = args[0] + r.Next(0,255);
+            string username = args[0] + r.Next(0, 255);
             string IpAdress = args[1];
             int port = int.Parse(args[2]);
 
@@ -57,6 +57,7 @@ namespace Client
 
             if (SDL.SDL_Init(SDL.SDL_INIT_EVERYTHING) == -1)
                 Console.WriteLine("Couldn't initialize SDL2#");
+
             if (window == IntPtr.Zero)
                 window = SDL.SDL_CreateWindow("NotAgario", SDL.SDL_WINDOWPOS_UNDEFINED,
                     SDL.SDL_WINDOWPOS_UNDEFINED, windowSize.Item1, windowSize.Item2, 0);
@@ -67,16 +68,31 @@ namespace Client
             if (renderer == IntPtr.Zero)
                 renderer = SDL.SDL_CreateRenderer(window, -1, SDL.SDL_RendererFlags.SDL_RENDERER_ACCELERATED);
 
+            IntPtr imageSurface = SDL.SDL_LoadBMP("./resources/circle208x208.bmp");
+            IntPtr foodSurface = SDL.SDL_LoadBMP("./resources/circle104x104.bmp");
+            IntPtr format1;
+            IntPtr format2;
+            unsafe
+            {
+                format1 = ((SDL.SDL_Surface*)imageSurface.ToPointer())->format;
+                format2 = ((SDL.SDL_Surface*)foodSurface.ToPointer())->format;
+            }
+            SDL.SDL_SetColorKey(imageSurface, 1, SDL.SDL_MapRGB(format1, 255, 255, 255));
+            SDL.SDL_SetColorKey(foodSurface, 1, SDL.SDL_MapRGB(format2, 255, 255, 255));
+            Cell.playerCircle = SDL.SDL_CreateTextureFromSurface(renderer, imageSurface);
+            Cell.foodCircle = SDL.SDL_CreateTextureFromSurface(renderer, foodSurface);
+
             while (quit == 0)
             {
-                while (!NetCode.isConnected) { 
+                while (!NetCode.isConnected)
+                {
                     NetCode.Connect(IpAdress, port, username);
                     SDL.SDL_Delay(500);
                 }
-                while (NetCode.isConnected)
+                while (NetCode.isConnected && quit == 0)
                 {
                     PollEvents();
-                    if (NetCode.isReadyToPlay)
+                    if (NetCode.isReadyToRender)
                     {
                         float sleepTime = (1f / FPS - FrameTime) * 1000;
                         SDL.SDL_Delay(sleepTime > 0 ? (uint)sleepTime : 1);
@@ -103,11 +119,13 @@ namespace Client
                         UpdateTime();
                     }
                     SDL.SDL_Delay(15);
-
-                    
                 }
-                
             }
+            // while (NetCode.SocketActive)
+            //{
+                NetCode.SendDisconnect();
+                SDL.SDL_Delay(500);
+            //}
             NetCode.Disconnect();
             SDL.SDL_DestroyWindow(window);
             SDL.SDL_Quit();

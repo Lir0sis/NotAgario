@@ -7,6 +7,8 @@ namespace Client
 {
     class Cell
     {
+        public static IntPtr playerCircle;
+        public static IntPtr foodCircle;
         public int id;
         public string name;
         public (int, int) center;
@@ -32,11 +34,11 @@ namespace Client
 
             if (Math.Abs(dx) - scaledR > offset.Item1 || Math.Abs(dy) - scaledR > offset.Item2)
                 return;
-
+            IntPtr surface;
             if (name == "")
-                SDL.SDL_SetRenderDrawColor(renderer, 100, 255, 50, 255);
+                surface = foodCircle;
             else
-                SDL.SDL_SetRenderDrawColor(renderer, 100, 100, 255, 255);
+                surface = playerCircle;
 
             var windowsSize = Program.windowSize;
 
@@ -47,9 +49,7 @@ namespace Client
                 x = windowsSize.Item1/2 + dx - scaledR,
                 y = windowsSize.Item2/2 + dy - scaledR
             };
-
-            SDL.SDL_RenderDrawRectF(renderer, ref scaledRect);
-            SDL.SDL_RenderFillRectF(renderer, ref scaledRect);
+            SDL.SDL_RenderCopyF(renderer, surface, IntPtr.Zero, ref scaledRect);
         }
         public void Update((int, int) coords, int radius)
         {
