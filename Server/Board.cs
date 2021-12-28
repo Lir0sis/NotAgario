@@ -6,18 +6,20 @@ namespace Server
 {
     class Board
     {
-        public HashSet<Cell> goneEntities = null;
-        public HashSet<Cell> newEntities = null;
+        public HashSet<Cell> frameGoneEntities = null;
+        public HashSet<Cell> frameGonePlayers = null;
+        public HashSet<Cell> frameNewEntities = null;
         Random rand;
         int sectorsNum;
         public int Size { get; private set; }
+        public Player leadingPlayer;
 
         Sector[,] sectors;
         public List<Player> players = new List<Player>();
 
         public Board()
         {
-            Size = 2000;
+            Size = 500;
             sectorsNum = (int)Math.Round(Size / (Utils.getRadius(Utils.PLAYER_MASS) * 16) );
             Sector.size = (float)Size / sectorsNum;
             sectors = new Sector[sectorsNum, sectorsNum];
@@ -30,17 +32,46 @@ namespace Server
             Cell.board = this;
         }
 
-        public void foodFillBoard()
+        public void FoodFillBoard()
         {
-            var startFood = rand.Next(Size/3, Size/2);
+            var startFood = rand.Next(Size/7, Size/5);
             for (int i = 0; i < startFood; i++)
             {
                 var coords = (rand.Next(0, Size * 10) / 10f, rand.Next(0, Size * 10) / 10f);
-                spawnEntity<Food>(coords);
+                SpawnEntity<Food>(coords);
             }
         }
+        public List<(Player, NewState)> UpdateBoard(float frameScale)
+        {
+            frameNewEntities = new HashSet<Cell>();
+            frameGoneEntities = new HashSet<Cell>();
+            frameGonePlayers = new HashSet<Cell>();
 
-        public Player spawnPlayer()
+            if (rand.NextDouble()> 0.98)
+                frameNewEntities.Add(SpawnEntity<Food>((
+                    rand.Next(0, Size * 10) / 10f, 
+                    rand.Next(0, Size * 10) / 10f
+                )));
+
+            var states = new List<(Player, NewState)>();
+
+            players.Sort((p1, p2) => p2.mass.CompareTo(p1.mass));
+            if(players.Count > 0) //&& (leadingPlayer == null || Math.Abs(leadingPlayer.mass - players[0].mass) > 20))
+                leadingPlayer = players[0];
+
+            foreach (var player in players)
+            {
+                states.Add((player, player.Move(frameScale)));
+            }
+            foreach (var player in players)
+            {
+                player.Update();
+            }
+
+            return states;
+        }
+
+        public Player SpawnPlayer()
         {
             bool IsSpawnable = false;
             double initialRadius = Utils.getRadius(Utils.PLAYER_MASS);
@@ -57,7 +88,7 @@ namespace Server
                 foreach (var p in players)
                 {
                     var diff = Utils.Subtract(p.center, coords);
-                    if (diff.Item1 + diff.Item2 <= Math.Pow(p.radius + initialRadius, 2))
+                    if (Math.Pow(diff.Item1,2) + Math.Pow(diff.Item2, 2) <= Math.Pow(p.radius, 2) + Math.Pow(initialRadius, 2))
                     {
                         IsSpawnable = false;
                         break;
@@ -65,15 +96,19 @@ namespace Server
                 }
                 if (IsSpawnable)
                 {
-                    var player = spawnEntity<Player>(coords);
+                    var player = SpawnEntity<Player>(coords);
                     this.players.Add(player);
                     return player;
                 }
             }
             return null;
         }
-
-        public T spawnEntity<T>((float, float) coords) where T : Cell
+        public void RemovePlayer(Player player)
+        {
+            players.Remove(player);
+            RemoveEntity(player);
+        }
+        public T SpawnEntity<T>((float, float) coords) where T : Cell
         {
             var sectorsCoords = Utils.getSectorNum(coords);
 
@@ -82,39 +117,13 @@ namespace Server
 
             return entity;
         }
-
-        public List<(Player, NewState)> updateBoard(float frameScale)
-        {
-            newEntities = new HashSet<Cell>();
-            goneEntities = new HashSet<Cell>();
-            //if (rand.NextDouble()> 0.95)
-            //    newEntities.Add(spawnEntity<Food>((
-            //        rand.Next(0, Size * 10) / 10f, 
-            //        rand.Next(0, Size * 10) / 10f
-            //    )));
-
-            var states = new List<(Player, NewState)>();
-
-            players.Sort((p1, p2) => p1.mass.CompareTo(p2.mass));
-            foreach(var player in players)
-            {
-                states.Add((player, player.Move(frameScale)));
-            }
-            //foreach (var player in players)
-            //{
-            //    player.Update();
-            //}
-
-            return states;
-        }
-
-        public void removeEntity(Cell entity)
+        public void RemoveEntity(Cell entity)
         {
             var sector = Utils.getSectorNum(entity.center);
             sectors[sector.Item1, sector.Item2].entities.Remove(entity);
         }
 
-        public HashSet<Sector> getVisibleArea(Cell entity, int radius = 1)
+        public HashSet<Sector> GetNeighbourSectors(Cell entity, int radius)
         {
             HashSet<Sector> res = new HashSet<Sector>();
             var sectorCoords = Utils.getSectorNum(entity.center);

@@ -55,7 +55,7 @@ namespace Server
         {
             center = coords;
             mass = Utils.PLAYER_MASS;
-            loadedArea = board.getVisibleArea(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
+            loadedArea = board.GetNeighbourSectors(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
         }
         public HashSet<Cell> getLoadedArea()
         {
@@ -78,7 +78,7 @@ namespace Server
 
             if (Utils.getSectorNum(center) != Utils.getSectorNum(newCoords))
             {
-                var newArea = board.getVisibleArea(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
+                var newArea = board.GetNeighbourSectors(this, (int)Math.Ceiling(radius * 2.5f / Sector.size) + 1);
                 foreach (var sec in loadedArea.Except(newArea))
                     result.goneEntities.UnionWith(sec.entities);
                 foreach (var sec in newArea.Intersect(loadedArea))
@@ -103,8 +103,12 @@ namespace Server
                     var distEuclid = Math.Pow(vec.Item1, 2) + Math.Pow(vec.Item2, 2);
                     if (distEuclid <= Math.Pow(radius, 2) && radius > entity.radius)
                     {
-                        sec.entities.Remove(entity);
-                        board.goneEntities.Add(entity);
+                        
+                        board.frameGoneEntities.Add(entity);
+                        if (typeof(Player).IsInstanceOfType(entity))
+                            board.frameGonePlayers.Add(entity);
+                        else
+                            sec.entities.Remove(entity);
                         mass += entity.mass / 5;
                     }
                 }

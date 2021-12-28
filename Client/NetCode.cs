@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Text;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace Client
 {
@@ -14,23 +16,33 @@ namespace Client
 
         static (Cell, string) player = (null, "");
 
+        enum ActionApplied {
+            ADD,
+            REMOVE,
+            UPDATE
+        }
 
-        //static Queue<(uint, byte[])> noResponsePackets = new Queue<(uint, byte[])>();
+        static ConcurrentQueue<(ActionApplied, List<dynamic[]>)> queuedDicts = 
+            new ConcurrentQueue<(ActionApplied, List<dynamic[]>)>();
 
-        //static uint _packetId = 0;
-        //static uint PacketId { get => _packetId++; }
-
+        static HashSet<uint> seenPackets = new HashSet<uint>();
         public static (int, int) playerCenter { get => player.Item1.center; }
         public static int playerRadius { get => player.Item1.radius; }
-
+        public static bool isSpectator { get; private set; }
         public static bool isConnected { get => player.Item2 != ""; }
         public static bool isReadyToPlay { get => player.Item1 != null; }
         public static bool isInitialized { get => UDPClient != null; }
 
+        public static void Init()
+        {
+            queuedDicts = new ConcurrentQueue<(ActionApplied, List<dynamic[]>)>();
+            Program.cells = new Dictionary<string, Cell>();
+        }
         public static void Connect(string IpAddress, int port, string username)
         {
             if (!isInitialized)
             {
+                seenPackets = new HashSet<uint>();
                 UDPClient = new UdpClient(IpAddress, port);
                 UDPClient.DontFragment = true;
                 UDPClient.BeginReceive(UDPRecieveCallback, null);
@@ -38,36 +50,30 @@ namespace Client
             SendConnect(username);
         }
 
-        public static void Disconnet()
+        public static void Disconnect()
         {
             if (isConnected)
             {
                 SendDisconnect();
                 UDPClient.Close();
             }
-
+            UDPClient = null;
             player = (null, "");
         }
-
-        public static void GetInitData()
+        public static void Reset()
         {
-            var name = Encoding.ASCII.GetBytes(player.Item2);
-            //var packetId = PacketId;
-            List<byte> bytes = new List<byte>();
-            bytes.Add(253);
-            //bytes.AddRange(BitConverter.GetBytes(packetId));
-            bytes.Add((byte)name.Length);
-            bytes.AddRange(name);
-
-            var array = bytes.ToArray();
-            UDPClient.BeginSend(array, array.Length, UDPSendCallback, null);
+            UDPClient.Close();
+            UDPClient = null;
+            player = (null, "");
         }
 
         public static void Update((int, int) mousePos)
         {
+            if (isSpectator)
+                return;
             if (isConnected)
             {
-                Task.Run(() =>
+                Task.Run(() => 
                     SendMoveVec(mousePos)
                 );
             }
@@ -75,7 +81,48 @@ namespace Client
         static void UDPSendCallback(IAsyncResult result)
         {
             UDPClient.EndSend(result);
-            UDPClient.BeginReceive(UDPRecieveCallback, null);
+        }
+
+        public static void SyncDict()
+        {
+            var itemsN = queuedDicts.Count;
+            while (itemsN > 0)
+            {
+                itemsN--;
+                (ActionApplied, List<dynamic[]>) listOfActions;
+                while (!queuedDicts.TryDequeue(out listOfActions)) { };
+
+                if (listOfActions.Item1 == ActionApplied.ADD)
+                    foreach (var i in listOfActions.Item2)
+                    {
+                        string key = i[0];
+                        Cell cell = i[1];
+                        if (Program.cells.ContainsKey(key))
+                            continue;
+                        Program.cells.Add(key, cell);
+                        if (key == player.Item2)
+                            player.Item1 = cell;
+                    }
+                else if (listOfActions.Item1 == ActionApplied.REMOVE)
+                    foreach (var i in listOfActions.Item2)
+                    {
+                        string key = i[1];
+                        if (Program.cells.ContainsKey(key))
+                            Program.cells.Remove(key);
+                    }
+                else if (listOfActions.Item1 == ActionApplied.UPDATE)
+                    foreach (var i in listOfActions.Item2)
+                    {
+                        string key = i[0];
+                        (int, int) coords = i[1];
+                        int radius = i[2];
+                        if (key == player.Item2)
+                            player.Item1.Update(coords, radius);
+                        else
+                            if (Program.cells.ContainsKey(key))
+                            Program.cells[key].Update(coords, radius);
+                    }
+            }
         }
 
         static void UDPRecieveCallback(IAsyncResult result)
@@ -86,11 +133,11 @@ namespace Client
             {
                 data = UDPClient.EndReceive(result, ref clientEndPoint);
             }
-            catch(SocketException e)
+            catch(SocketException e) 
             {
                 if (e.SocketErrorCode == SocketError.ConnectionReset)
                 {
-                    Disconnet();
+                    Disconnect();
                 }
                 return;
             }
@@ -101,52 +148,61 @@ namespace Client
             var reader = new BinaryReader(stream);
 
             byte code = reader.ReadByte();
-            Console.WriteLine(data.Length + $" {code}, {stream.Capacity} {stream.Position}");
+            //Console.WriteLine(data.Length + $" {code}, {stream.Capacity} {stream.Position}");
 
             int length = -1;
             uint packetId = uint.MaxValue;
+            List<dynamic[]> actionList = null;
+
             try
             {
                 switch (code)
                 {
                     case 100:
                         packetId = reader.ReadUInt32();
-                        length = reader.ReadUInt16();
-                        Cell player_cell = null;
-                        for (int i = 0; i < length; i++)
+
+                        if (!seenPackets.Contains(packetId))
                         {
-                            int x = reader.ReadUInt16();
-                            int y = reader.ReadUInt16();
-                            int radius = reader.ReadUInt16();
-                            string name_id = reader.ReadString();
+                            actionList = new List<dynamic[]>();
+                            length = reader.ReadUInt16();
 
-                            if (Program.cells.ContainsKey(name_id))
-                                continue;
+                            for (int i = 0; i < length; i++)
+                            {
+                                int x = reader.ReadUInt16();
+                                int y = reader.ReadUInt16();
+                                int radius = reader.ReadUInt16();
+                                string name_id = reader.ReadString();
 
-                            var cell = new Cell(name_id, (x, y), radius);
-                            if (name_id == player.Item2)
-                                player_cell = cell;
+                                var cell = new Cell(name_id, (x, y), radius);
 
-                            Program.cells.Add(name_id, cell);
+                                actionList.Add(new dynamic[] { name_id, cell });
+                            }
+
+                            queuedDicts.Enqueue((ActionApplied.ADD, actionList));
+                            seenPackets.Add(packetId);
                         }
-                        if(player_cell != null)
-                            player.Item1 = player_cell;
-
                         SendSuccess(packetId, player.Item2);
                         break;
 
                     case 101:
                         while(!isReadyToPlay) { System.Threading.Thread.Sleep(5); }
-
                         packetId = reader.ReadUInt32();
-                        length = reader.ReadUInt16();
-                        for (int i = 0; i < length; i++)
+                        if (!seenPackets.Contains(packetId))
                         {
-                            string name_id = reader.ReadString();
-                            if (!Program.cells.ContainsKey(name_id))
-                                continue;
+                            actionList = new List<dynamic[]>();
+                            length = reader.ReadUInt16();
+                            for (int i = 0; i < length; i++)
+                            {
+                                string name_id = reader.ReadString();
 
-                            Program.cells.Remove(name_id);
+                                if (name_id.Split("#")[0] == "")
+                                    actionList.Add(new dynamic[] { false, name_id });
+                                else
+                                    actionList.Add(new dynamic[] { true, name_id });
+                            }
+
+                            queuedDicts.Enqueue((ActionApplied.REMOVE, actionList));
+                            seenPackets.Add(packetId);
                         }
                         SendSuccess(packetId, player.Item2);
                         break;
@@ -154,6 +210,7 @@ namespace Client
                     case 102:
                         if (!isReadyToPlay)
                             break;
+                        actionList = new List<dynamic[]>();
 
                         length = reader.ReadUInt16();
                         for (int i = 0; i < length; i++)
@@ -162,20 +219,59 @@ namespace Client
                             int y = reader.ReadUInt16();
                             int radius = reader.ReadUInt16();
                             string name_id = reader.ReadString();
-                            if (!Program.cells.ContainsKey(name_id))
-                                continue;
-                            Program.cells[name_id].Update((x, y), radius);
+
+                            actionList.Add(new dynamic[] { name_id, (x, y), radius });
                         }
+
+                        queuedDicts.Enqueue((ActionApplied.UPDATE, actionList));
                         break;
                     case 200:
                         packetId = reader.ReadUInt32();
                         break;
+                    case 210:
+                        packetId = reader.ReadUInt32();
+                        if (!seenPackets.Contains(packetId))
+                        {
+                            Console.WriteLine($"--LeaderBoard--");
+                            length = reader.ReadUInt16();
+                            for (int i = 0; i < length; i++)
+                            {
+                                int mass = reader.ReadUInt16();
+                                string name_id = reader.ReadString();
+
+                                Console.WriteLine($"{name_id} - {mass}");
+                            }
+                            seenPackets.Add(packetId);
+                        }
+                        SendSuccess(packetId, player.Item2);
+                        break;
+                    case 240:
+                        packetId = reader.ReadUInt32();
+                        if (!seenPackets.Contains(packetId))
+                        {
+                            Init();
+                            string username = reader.ReadString();
+                            player = (new Cell(username, (0, 0), 1), username);
+                            seenPackets.Add(packetId);
+                            isSpectator = true;
+                        }
+                        SendSuccess(packetId, player.Item2);
+                        break;
                     case 254:
                         packetId = reader.ReadUInt32();
-                        string username = reader.ReadString();
-                        player = (new Cell(username, (0, 0), 1), username);
+                        if (!seenPackets.Contains(packetId))
+                        {
+                            Init();
+                            string username = reader.ReadString();
+                            player = (new Cell(username, (0, 0), 1), username);
+                            seenPackets.Add(packetId);
+                            isSpectator = false;
+                        }
 
-                        SendSuccess(packetId, username);
+                        SendSuccess(packetId, player.Item2);
+                        break;
+                    case 255:
+                        Reset();
                         break;
                 }
             }
@@ -185,18 +281,6 @@ namespace Client
                     $"{error.StackTrace}" +
                     $"\n{error.Message}");
             }
-            finally
-            {
-                //var lostPacket = noResponsePackets.Peek();
-                //if (lostPacket.Item1 == packetId)
-                //    noResponsePackets.Dequeue();
-                //else
-                //{
-                //    var bytes = lostPacket.Item2;
-                //    UDPClient.BeginSend(bytes, bytes.Length, UDPSendCallback, null);
-                //}
-            }
-
         }
 
         static void SendSuccess(uint packedId, string username)
@@ -215,8 +299,7 @@ namespace Client
         static void SendConnect(string Username)
         {
             var name = Encoding.ASCII.GetBytes(Username);
-            List<byte> bytes = new List<byte>();
-            bytes.Add(254);
+            List<byte> bytes = new List<byte>() { 254 };
             bytes.Add((byte)name.Length);
             bytes.AddRange(name);
 
@@ -244,22 +327,23 @@ namespace Client
             bytes.Add((byte)name.Length);
             bytes.AddRange(name);
 
-            float dx = -480 / 2 + mousePos.Item1;
-            float dy = -480 / 2 + mousePos.Item2;
+            var wSize = Program.windowSize;
+
+            float dx = -wSize.Item1 / 2 + mousePos.Item1;
+            float dy = -wSize.Item2 / 2 + mousePos.Item2;
+            float maxLength = Math.Min(wSize.Item1, wSize.Item2) / 3;
 
             float length = (float)Math.Sqrt(Math.Pow(dx, 2) + Math.Pow(dy, 2));
-            if (length <= 1)
-                length = 1;
+            if (length < maxLength)
+                length = maxLength;
 
             var mouseVec = (dx / length, dy / length);
-            //Console.WriteLine(mouseVec);
 
             bytes.AddRange(BitConverter.GetBytes(mouseVec.Item1));
             bytes.AddRange(BitConverter.GetBytes(mouseVec.Item2));
 
             var array = bytes.ToArray();
             UDPClient.BeginSend(array, array.Length, UDPSendCallback, null);
-            System.Threading.Thread.Sleep(5);
         }
 
     }

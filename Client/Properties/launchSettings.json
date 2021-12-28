@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Client": {
+      "commandName": "Project",
+      "commandLineArgs": "BOY \"5.248.192.64\" 7777"
+    }
+  }
+}
