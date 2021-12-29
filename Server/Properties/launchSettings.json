@@ -2,7 +2,7 @@
   "profiles": {
     "Server": {
       "commandName": "Project",
-      "commandLineArgs": "7777 500 3 2"
+      "commandLineArgs": "7777 500 5 2"
     }
   }
 }

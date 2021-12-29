@@ -85,12 +85,22 @@ namespace Server
             untilStart = ServerSleepTime;
             untilEnd = POSTGAME_TIME;
             players = prevClients;
+            List<Task> tasks = new List<Task>();
+
+            if (board != null && players.Reverse.ContainsKey(board.leadingPlayer))
+            {
+                var key = players.Reverse[board.leadingPlayer];
+                tasks.Add(Task.Run(() => SendDisconnect(key.Item1)));
+            }
+
+            
             Program.spectators = spectators;
             if (spectators.Count > 0)
             {
                 foreach(var endPoint in spectators)
                 {
-                    Task.Run(() => SendDisconnect(endPoint));
+                    //playersPackets.Add(endPoint, new Queue<(uint, byte[])>());
+                    tasks.Add(Task.Run(() => SendDisconnect(endPoint)));
                 }
             }
             spectators = new HashSet<IPEndPoint>();
@@ -100,9 +110,12 @@ namespace Server
             if (players.Count > 0)
                 foreach (var p in players)
                 {
-                    Task.Run(() => SendDisconnect(p.Key.Item1));
+                    //if (!playersPackets.ContainsKey(p.Key.Item1))
+                    //    playersPackets.Add(p.Key.Item1, new Queue<(uint, byte[])>());
+                    tasks.Add(Task.Run(() => SendDisconnect(p.Key.Item1)));
                 }
-            
+
+            Task.WaitAll(tasks.ToArray());
             players = new ClientsMap<(IPEndPoint, string), Player>();
             leaderBoard = new List<(int, string)>();
         }
@@ -182,14 +195,21 @@ namespace Server
                         Task.Run(() => SendLeaderBoard(spec));
 
                     Task.Run(() => SendLeaderBoard(players.Reverse[board.leadingPlayer].Item1)).Wait();
-                    board.leadingPlayer = null;
                 }
                 if( untilEnd <= 0)
                     InitGame(players, spectators);
                 
             }
-            foreach(var p in playersPackets)
+            SendPacketsAgain();
+            Utils.UpdateTime();
+        }
+
+        public static void SendPacketsAgain()
+        {
+            var packets = playersPackets.ToList();
+            for (int i= 0; i < packets.Count; i++)
             {
+                var p = packets[i];
                 if (p.Value.Count <= 0)
                     continue;
                 var packet = p.Value.Peek();
@@ -198,7 +218,6 @@ namespace Server
                     continue;
                 UDPClient.BeginSend(bytes, bytes.Length, p.Key, UDPSendCallback, bytes);
             }
-            Utils.UpdateTime();
         }
 
         public static void SyncDict()
@@ -448,7 +467,8 @@ namespace Server
         {
             IPEndPoint clientEndPoint = new IPEndPoint(IPAddress.Any, 0);
             byte[] data = UDPClient.EndReceive(result, ref clientEndPoint);
-
+            
+            result.AsyncWaitHandle.WaitOne();
             UDPClient.BeginReceive(UDPRecieveCallback, null);
             //Console.WriteLine(clientEndPoint + " " + data[0]);
 
